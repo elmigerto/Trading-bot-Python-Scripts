@@ -1,0 +1,364 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Sun Sep 12 15:19:53 2021
+
+@author: Tobias Elmiger
+
+TODO:
+    - Add money
+
+
+"""
+
+import time
+import connectionHandling as ch
+import sched
+import time
+import DataManipulation as dm
+import numpy as np
+import threading
+
+
+
+def start():
+    strategieOne = Strategy()
+    
+def getSchedule(delay, function):
+    schedule = sched.scheduler(time.time,time.sleep)
+    schedule.enter(delay = delay, priority= 0, action = function)
+    schedule.run()
+    return schedule
+    
+class SellStrategy:
+    
+    def initialize(parts = 7, c = 0.01, base=1.9, equal = True):
+        ss = {}
+        percentil = 1/parts
+        if(equal == True):
+            for index in range(0,parts):
+                multiplier = 1 + c * pow(base,index)
+                ss[multiplier] = percentil
+        return ss
+                
+                
+    def normalize(strategy):
+        # Input: Dict with key: sellpercentage, value: sell part
+        
+        sumStrategy = 0
+        for part in strategy:
+            pass
+
+# *** Thread class ***   
+class ThreadClass(threading.Thread):
+    def __init__(self, threadID, name, function):
+        threading.Thread.__init__(self)
+        self.threadID = threadID
+        self.name = name
+        self.function = function
+        
+    def run(self):
+        print(f"Start thread ID: {self.threadID}, name: {self.name}")
+        threadLock.acquire(0)
+        self.function()
+        threadLock.release()
+            
+threadLock = threading.Lock()
+threads = []
+
+    
+# **** End of Thread *****
+
+
+class Strategy:
+    
+    def __init__(self):
+        
+        # Time
+        self.startTime = time.time()
+        self.nextTriggerTime = []
+        self.avgSpacingBetweenTriggerEventsSec = 60*60*24
+        self.sdtDevTriggerEvents = 0.1
+        self.tradingEventNr = 0
+        self.updateTime = 5 # Updates the orders every x seconds
+        
+        # Parameter
+        self.ConnectionHandling = ch.ConnectionHandling() 
+        self.schedule = sched.scheduler(time.time,time.sleep)
+        self.assetPairId = ['ETHEUR']
+        self.strategyName = 'alpha_0'
+        self.sellStrategy = SellStrategy.initialize()
+                
+        # Init Variables
+        self.activeOrders = {}
+        #self.updateActiveOrders()
+        
+        # StartStrategie
+        self.data = dm.DataManipulation(self.strategyName)
+        self.startStrategie()        
+    
+    
+    # Info: will be frequently called
+    def timeEvent(self):
+        self.evaluateStrategie()
+        
+    
+    def running(self):
+        self.continueRunning = True
+            
+            
+    def evaluateStrategie(self):
+        pass
+    
+    def startStrategie(self):
+        #
+        #self.ConnectionHandling.cancelAllOrders()
+        #self.orderStream()
+        #print(self.ConnectionHandling.getAllOrders())
+        #print(self.ConnectionHandling.getActiveOrders())
+        #print(self.ConnectionHandling.getCompletedOrders())
+        #self.activeOrders = self.getActiveOrders()
+        #self.schedulePeriodicUpdateEvents()
+        
+        # Thread managment
+        
+        self.updateEvent = ThreadClass(threading.activeCount() + 1, 'periodic update event', self.periodicUpdateEventsLoop)
+        self.buyEvent = ThreadClass(threading.activeCount() + 1, 'periodic buy event', self.periodicBuyEventLoop)
+        self.reRunThreads = True;
+        self.updateEvent.start()
+        self.buyEvent.start()
+        
+        # self.orderStream('ETHEUR')
+    def stopThreads(self):
+        self.reRunThreads = False
+    
+    
+    def periodicUpdateEventsLoop(self,updateFrequencyInSeconds=1):
+        while(self.reRunThreads):
+            self.periodicUpdateEvent()
+            time.sleep(updateFrequencyInSeconds)
+    
+    def orderStream(self,assetPairId = 0):
+        self.ConnectionHandling.streamCompletedTrades(assetPairId)
+
+
+    #  --- Periodical Functions --- 
+    def periodicBuyEventLoop(self):
+        order = False
+        maxTries = 3
+        currentTry = 0
+        while(self.reRunThreads):
+            if currentTry < maxTries:
+                if (not order):
+                    order = self.periodicBuyEvent()
+                time.sleep(0.1)
+                if(order):
+                    self.data.updateOrAddOrder(order)
+                    triggerWaitTime = np.abs(np.random.normal(self.avgSpacingBetweenTriggerEventsSec,self.avgSpacingBetweenTriggerEventsSec*0.5))
+                    self.nextTriggerTime.append(triggerWaitTime + time.time())          
+                    self.tradingEventNr += 1
+                    time.sleep(triggerWaitTime)
+                    order = False
+                    currentTry = 0
+                else:
+                    time.sleep(10)
+                    currentTry += 1
+            else:
+                triggerWaitTime = np.abs(np.random.normal(self.avgSpacingBetweenTriggerEventsSec,self.avgSpacingBetweenTriggerEventsSec*0.5))
+                self.nextTriggerTime.append(triggerWaitTime + time.time())          
+                self.tradingEventNr += 1
+                time.sleep(triggerWaitTime)
+                order = False
+                currentTry = 0
+            
+    def periodicBuyEvent(self):
+        price = self.ConnectionHandling.get_price(self.assetPairId[0])
+        bid = float(price.payload[0].bid)
+        medium = (float(price.payload[0].bid) + float(price.payload[0].ask))/2
+        tradingPrice = bid
+        total = 35
+        volume = dm.Order.calculateVolume(tradingPrice,total)
+        order = dm.Order(self.assetPairId[0],0,volume, tradingPrice)
+        order = self.placeOrder(order)
+        return order
+    
+    def performSellStrategyOrder(self,order,strategy = 0):
+        #Just pass the matched order
+        self.performSellStrategy(order.assetPairId,float(order.price),float(order.volume),strategy)
+
+    def performSellStrategyCurrentPrice(self,assetPairId,volume,strategy = 0):
+        price = self.ConnectionHandling.get_price(self.assetPairId)
+        self.performSellStrategy(assetPairId, price, volume)
+
+    def performSellStrategy(self,assetPairId,price,volume,strategy = 0):
+        if(strategy):
+            sellStrategy = strategy
+        else:
+            sellStrategy = self.sellStrategy
+        # Check whether sell strategy workds
+        maxParts = dm.Order.maxParts(volume)
+        if len(sellStrategy) > maxParts:
+            sellStrategy = SellStrategy.initialize(maxParts)
+        
+        # Places an order for each multiplier in the strategy, whereas a fraction of the volume is used.
+        for multiplier in sellStrategy:
+            priceNewOrder = price * multiplier
+            volumeNewOrder = volume * sellStrategy[multiplier]
+            newOrder = dm.Order(assetPairId, 'Sell', volumeNewOrder, priceNewOrder)
+            self.placeOrder(newOrder)
+            time.sleep(0.1)
+        
+            
+                    
+    def periodicUpdateEvent(self):
+        # Returns all recent completed order and updates the trades active trades list.
+        newlyCompletedOrders = self.getAllCompletedActiveOrders(side='buy')
+        for newlyCompletedOrder in newlyCompletedOrders:
+            print('====> Perform Sell Strategy')
+            self.performSellStrategyOrder(newlyCompletedOrder)
+
+        # Restarts the event -> needs to be in the end of the function!
+    
+    # Orders
+    def getActiveOrders(self):
+        return self.ConnectionHandling.getActiveOrders()
+    
+    # Active Orders
+    def getAllOrders(self):
+        return self.ConnectionHandling.getAllOrders()
+
+    def getMatchedOrders(self):
+        return self.ConnectionHandling.getMatchedOrders()
+    
+    def placeOrder(self,orderToPlace):
+        # Format of orderToPlace: DataManipulation
+        order = self.ConnectionHandling.place_order(orderToPlace)
+        # If successful, save order
+        if (order):
+            self.data.updateOrAddOrder(order)
+        
+        return order    
+        
+               
+    def updateActiveOrders(self):
+        activeOrders = self.getActiveOrders()
+        self.activeOrders = {}
+        for activeOrder in activeOrders:
+            self.activeOrders[activeOrder.id] = activeOrder
+            
+    def getAllCompletedActiveOrders(self,side='all'):
+        #SIDE: either sell, buy, or all
+        if side == 'all'
+        currentActiveOrders = self.activeOrders
+        newlyCompletedOrders = {}
+        for orderId in currentActiveOrders:
+            order =  self.ConnectionHandling.getOrder(orderId)
+            order = order.payload
+            if(order.status == 'Matched' and order.assetPairId == self.assetPairId[0] and checkSide(order,side)):
+                newlyCompletedOrders[order.id] = order
+                print('Order comleted:')
+                print(order)
+        self.updateActiveOrders()
+        return newlyCompletedOrders
+    
+    def checkSide(self,order,side):
+        #SIDE: either sell, buy, or all
+        if side == 'all':
+            return True
+        elif side =='sell':
+            if(hasattr(order, side)):
+                return order.side == side
+        elif side == 'buy':
+            if(hasattr(order, side)):
+                return order.side == side
+            else:
+                return True
+            
+        
+    def getBalance(self,assetID=''):
+        return self.ConnectionHandling.get_balances(assetID)
+    
+    def tradeInfoConversion(self, receive):
+        # Returns a converted dict from a received order
+        # @Param: receive: an order
+        # @return: a dictionary
+        
+        # id: "abeae4f1-b0e7-43c5-a86b-ce15c02d84b2"
+        # timestamp {
+        #   seconds: 1634457448
+        #   nanos: 576000000
+        # }
+        # status: "Placed"
+        # assetPairId: "ETHEUR"
+        # type: "Limit"
+        # price: "2100"
+        # volume: "0.001"
+        # filledVolume: "0.000"
+        # remainingVolume: "0.001"
+        # cost: "0.000"
+        convertedReturnOrder = {}
+        convertedReturnOrder['id'] = receive.id
+        convertedReturnOrder['assetPairId'] = receive.assetPairId
+        convertedReturnOrder['volume'] = receive.volume
+        
+    def orderCompletedEvent(self):
+        pass
+    
+    def checkPrice(self):
+        self.ConnectionHandling.get_quotes()
+    # **** Test FUnctions *****
+    
+    def testThreading(self):
+        self.a = 0
+        numberOfThreads = threading.activeCount()
+        self.threadOne = ThreadClass(numberOfThreads+1, 'ThreadOne', self.testFunctionThreadOne)
+        threads.append(self.threadOne)   
+        self.threadTwo = ThreadClass(numberOfThreads+2, 'ThreadTwo', self.testFunctionThreadTwo)
+        threads.append(self.threadTwo)
+        self.threadOne.start()
+        self.threadTwo.start()
+        
+    def testFunctionThreadOne(self):
+        print('thread one')
+        self.a += 10
+        print(self.a)
+        time.sleep(5)
+        self.testFunctionThreadOne()
+        
+    def testFunctionThreadTwo(self):
+        print('thread two')
+        self.a -= 1
+        print(self.a)
+        time.sleep(1)
+        self.testFunctionThreadTwo()
+    
+    def testEvent(self):
+        triggerWaitTime = 1
+        if (hasattr(self,'test')):
+            self.test += 1
+        else: 
+            self.test = 0
+        self.schedule.enter(triggerWaitTime,1,self.testEvent)
+        print(f'testevent{self.test}')
+
+    
+    
+# ExampleOrder: 
+# Returns a converted dict from a received order
+# @Param: receive: an order
+# @return: a dictionary
+
+# id: "abeae4f1-b0e7-43c5-a86b-ce15c02d84b2"
+# timestamp {
+#   seconds: 1634457448
+#   nanos: 576000000
+# }
+# status: "Placed"
+# assetPairId: "ETHEUR"
+# type: "Limit"
+# price: "2100"
+# volume: "0.001"
+# filledVolume: "0.000"
+# remainingVolume: "0.001"
+# cost: "0.000"
+myTradingBot = Strategy()
